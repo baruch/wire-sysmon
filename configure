@@ -1,0 +1,141 @@
+#!/usr/bin/python
+
+import os
+import glob
+import sys
+sys.path.insert(0, './ninja')
+
+import ninja_syntax
+from ninja_helpers import shell_escape, cmd_exists, cmd_succeeds
+
+BUILD_FILENAME = 'build.ninja'
+buildfile = open(BUILD_FILENAME, 'w')
+n = ninja_syntax.Writer(buildfile)
+n.comment('This file is used to build the wire-sysmon system')
+n.comment('It is auto-generated, look at configure.py to modify it')
+n.newline()
+
+top_targets = []
+
+# Setup environment to rebuild the ninja.build file
+n.variable('configure_args', ' '.join(sys.argv[1:]))
+env_keys = set(['CC', 'AR', 'CFLAGS', 'LDFLAGS', 'DEBUG'])
+configure_env = dict((k, os.environ[k]) for k in os.environ if k in env_keys)
+if configure_env:
+    config_str = ' '.join([k + '=' + configure_env[k] for k in configure_env])
+    n.variable('configure_env', config_str + '$ ')
+n.rule('configure',
+        command='${configure_env} ./configure ${configure_args}',
+        generator=True)
+build_ninja = n.build('build.ninja', 'configure', implicit=['configure'] + glob.glob('ninja/*.py'))
+top_targets += build_ninja
+n.newline()
+
+# Setup
+n.variable('builddir', 'built')
+def built(filename):
+    return os.path.join('$builddir', filename)
+def c2obj(filename):
+    return os.path.splitext(filename)[0] + '.o'
+def x2c(filename):
+    return os.path.splitext(filename)[0] + '.c'
+
+def flatten(l):
+    nl = []
+    for i in l:
+        if type(i) == list:
+            nl += i
+        else:
+            nl.append(i)
+    return nl
+
+def c_to_o(c_files):
+    o_files = [n.build(built(c2obj(c_file)), 'c', c_file)[0] for c_file in c_files]
+    return o_files
+
+def c_files_list(d):
+    return glob.glob(os.path.join(d, '*.c'))
+
+def objs_for_dir(d):
+    c_files = c_files_list(d)
+    return c_to_o(c_files)
+
+# Setup the build variables
+n.variable('cc', configure_env.get('CC', 'gcc'))
+n.variable('ar', configure_env.get('AR', 'ar'))
+n.variable('builddir', 'build')
+
+cflags = ['-g', '-Wall', '-Wextra', '-Werror', '-Ilibwire/include', '-D_GNU_SOURCE',
+    '-D_FILE_OFFSET_BITS=64', '-I.', '-D_FORTIFY_SOURCE=2', '-Isrc',
+    '-ggdb3', # Let gdb know about macros
+    ]
+
+if 'DEBUG' in configure_env:
+    cflags.extend(['-O0'])
+else:
+    cflags.extend(['-O3', '-DNDEBUG=1'])
+
+if 'CFLAGS' in configure_env:
+    cflags.append(configure_env['CFLAGS'])
+n.variable('cflags', ' '.join(shell_escape(flag) for flag in cflags))
+
+ldflags = ['-lpthread']
+if 'LDFLAGS' in configure_env:
+    ldflags.append(configure_env['LDFLAGS'])
+n.variable('ldflags', ' '.join(shell_escape(flag) for flag in ldflags))
+
+n.newline()
+
+n.rule('c',
+        command='$cc -MMD -MT $out -MF $out.d $cflags $cmdcflags -c $in -o $out',
+        depfile='$out.d',
+        deps='gcc',
+        description='CC $out'
+)
+n.newline()
+
+n.rule('ar',
+        command='rm -f $out && $ar crs $out $in',
+        description='AR $out',
+)
+n.newline()
+
+n.rule('link',
+        command='$cc -o $out $in $libs $ldflags',
+        description='LINK $out'
+)
+n.newline()
+
+# tags
+if cmd_exists('ctags') and cmd_succeeds('ctags -R'):
+    n.rule('tags',
+            command='ctags -R',
+            description='TAGS $out')
+    tags = n.build('tags', 'tags', implicit=c_files_list('src') + c_files_list('libwire/src'))
+    top_targets += tags
+
+# C libs
+n.rule('build.ninja',
+        command='cd $dir && CFLAGS="$cflags" LDFLAGS="$ldflags" ./configure.py',
+        description='CONFIGURE $name')
+n.rule('sub_ninja',
+        command='cd $dir && ninja ${name}.a',
+        description='BUILD $out')
+clibs = []
+for l in ('libwire',):
+    variables = [('name', l), ('dir', l)]
+    build_ninja = n.build(os.path.join(l, 'build.ninja'), 'build.ninja', implicit=[os.path.join(l, 'configure.py')], variables=variables)
+    lib = n.build(os.path.join(l, l) + '.a', 'sub_ninja', implicit=[os.path.join(l, 'build.ninja')], variables=variables)
+    clibs += lib
+
+# wire-sysmon app
+c_files = c_files_list('src') + ['libwire/test/utils.c']
+base_objs = c_to_o([c_file for c_file in c_files if not c_file.endswith('main.c')])
+main_obj = c_to_o([c_file for c_file in c_files if c_file.endswith('main.c')])
+o_files = main_obj + base_objs
+exe = n.build('wire-sysmon', 'link', o_files + clibs)
+top_targets += exe
+
+target_all = n.build('all', 'phony', top_targets)
+n.default(target_all)
+print 'wrote %s.' % BUILD_FILENAME

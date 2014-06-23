@@ -1,0 +1,6 @@
+*.pyc
+*.o
+wire-sysmon
+build
+build.ninja
+.gdb_history
