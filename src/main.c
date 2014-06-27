@@ -29,6 +29,7 @@ static wire_pool_t web_pool;
 
 #define IF_MODIFIED_SINCE_HDR "If-Modified-Since"
 #define WEB_POOL_SIZE 8
+#define MODULE_PREFIX "/module.php?module="
 
 static wire_thread_t wire_thread_main;
 static wire_t wire_accept;
@@ -215,8 +216,21 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 		return;
 }
 
+static off_t module_hostname(char *buf)
+{
+	strcpy(buf, "{\"module\": \"hostname\", \"data\": \"test-hostname\"}");
+	return strlen(buf);
+}
+
+struct modules {
+	const char *name;
+	off_t (*func)(char *buf);
+} modules[] = {
+	{"hostname", module_hostname},
+};
+
 #include "web.h"
-static const char *request_get(const char *filename, off_t *buf_len, const char **last_modified, const char **content_type)
+static const char *request_get(const char *filename, off_t *buf_len, const char **last_modified, const char **content_type, char *wrbuf)
 {
 	unsigned i;
 
@@ -230,6 +244,20 @@ static const char *request_get(const char *filename, off_t *buf_len, const char 
 			*last_modified = spath->last_modified;
 			*content_type = spath->content_type;
 			return *spath->content;
+		}
+	}
+
+	// What's left is only the monitoring modules
+	if (strncmp(filename, MODULE_PREFIX, strlen(MODULE_PREFIX)) != 0)
+		return NULL;
+
+	for (i = 0; i < sizeof(modules)/sizeof(modules[0]); i++) {
+		const struct modules *mod = &modules[i];
+		if (strcmp(mod->name, filename + strlen(MODULE_PREFIX)) == 0) {
+			*last_modified = "";
+			*buf_len = mod->func(wrbuf);
+			*content_type = "text/json";
+			return wrbuf;
 		}
 	}
 
@@ -255,7 +283,8 @@ static int on_message_complete(http_parser *parser)
 
 	bool only_head = parser->method == HTTP_HEAD;
 
-	const char *buf = request_get(filename, &buf_len, &last_modified, &content_type);
+	char wrbuf[1024];
+	const char *buf = request_get(filename, &buf_len, &last_modified, &content_type, wrbuf);
 
 	DEBUG("If modified since is '%s' last modified is '%s'", d->if_modified_since, last_modified);
 	if (buf && d->if_modified_since[0] && strcmp(d->if_modified_since, last_modified) == 0) {
