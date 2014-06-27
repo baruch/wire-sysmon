@@ -266,6 +266,16 @@ static off_t module_issue(char *buf)
 	return MOD_OK("issue", "unknown OS");
 }
 
+static off_t module_time(char *buf)
+{
+	char data[32];
+	time_t now = time(NULL);
+
+	ctime_r(&now, data);
+	data[strlen(data)-1] = 0;
+	return MOD_OK("time", "%s", data);
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -273,6 +283,7 @@ struct modules {
 	{"hostname", module_hostname},
 	{"uptime", module_uptime},
 	{"issue", module_issue},
+	{"time", module_time},
 };
 
 #include "web.h"
