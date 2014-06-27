@@ -215,15 +215,19 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 		return;
 }
 
-static char index_html[] = "<html><head><title>Title</title></head><body>Hello World!</body></html>";
-
+#include "web.h"
 static const char *request_get(const char *filename, off_t *buf_len, const char **last_modified, const char **content_type)
 {
-	if (strcmp(filename, "/") == 0) {
-		*buf_len = strlen(index_html);
-		*last_modified = "Wed, 07 Apr 2010 07:59:15 GMT";
-		*content_type = "text/html";
-		return index_html;
+	unsigned i;
+
+	for (i = 0; i < sizeof(static_paths)/sizeof(static_paths[0]); i++) {
+		struct static_paths *spath = &static_paths[i];
+		if (strcmp(filename, spath->web_path) == 0) {
+			*buf_len = spath->len;
+			*last_modified = spath->last_modified;
+			*content_type = spath->content_type;
+			return *spath->content;
+		}
 	}
 
 	return NULL;

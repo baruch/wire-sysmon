@@ -3,6 +3,7 @@
 import os
 import glob
 import sys
+import string
 sys.path.insert(0, './ninja')
 
 import ninja_syntax
@@ -49,12 +50,24 @@ def flatten(l):
             nl.append(i)
     return nl
 
-def c_to_o(c_files):
-    o_files = [n.build(built(c2obj(c_file)), 'c', c_file)[0] for c_file in c_files]
+def c_to_o(c_files, implicit=None):
+    o_files = [n.build(built(c2obj(c_file)), 'c', c_file, implicit=implicit)[0] for c_file in c_files]
     return o_files
 
 def c_files_list(d):
     return glob.glob(os.path.join(d, '*.c'))
+
+def suffix(fname):
+    return os.path.splitext(fname)[1][1:]
+
+def file_list(d, suffixes):
+    suffixes = set(suffixes)
+    out = []
+    for root, dirs, files in os.walk(d):
+        for fname in files:
+            if suffix(fname) in suffixes:
+                out.append(os.path.join(root, fname))
+    return out
 
 def objs_for_dir(d):
     c_files = c_files_list(d)
@@ -106,6 +119,11 @@ n.rule('link',
 )
 n.newline()
 
+n.rule('bin2h',
+        command='./bin2h $name $in > $out.tmp && mv $out.tmp $out',
+        description='BIN2H $out')
+n.newline()
+
 # tags
 if cmd_exists('ctags') and cmd_succeeds('ctags -R'):
     n.rule('tags',
@@ -128,10 +146,14 @@ for l in ('libwire',):
     lib = n.build(os.path.join(l, l) + '.a', 'sub_ninja', implicit=[os.path.join(l, 'build.ninja')], variables=variables)
     clibs += lib
 
+# bin2h (js + css + html)
+bin2h_src = file_list('src/web', ['html', 'js', 'css', 'woff', 'svg', 'ttf', 'eot'])
+bin2h_out = n.build('src/web.h', 'bin2h', bin2h_src, implicit=['bin2h'])
+
 # wire-sysmon app
 c_files = c_files_list('src') + ['libwire/test/utils.c']
 base_objs = c_to_o([c_file for c_file in c_files if not c_file.endswith('main.c')])
-main_obj = c_to_o([c_file for c_file in c_files if c_file.endswith('main.c')])
+main_obj = c_to_o([c_file for c_file in c_files if c_file.endswith('main.c')], implicit=bin2h_out)
 o_files = main_obj + base_objs
 exe = n.build('wire-sysmon', 'link', o_files + clibs)
 top_targets += exe

@@ -1,0 +1,56 @@
+#!/usr/bin/env python
+
+import os
+import time
+import sys
+import string
+
+
+name_trans = string.maketrans('.-/', '___')
+
+def filename_to_web_path(fname):
+    return fname.replace('src/web/', '')
+
+def filename_to_var(fname):
+    fname = filename_to_web_path(fname)
+    return fname.translate(name_trans)
+
+def process_file(fname, varname):
+    print 'static const char *%s = ' % varname
+
+    for l in file(fname, 'r'):
+            sys.stdout.write('"')
+            for c in l:
+                    sys.stdout.write('\\x%02X' % ord(c))
+            print '"'
+    print ';'
+
+content_types = {
+        'html': 'text/html',
+        'css': 'text/css',
+        'js': 'text/javascript',
+        'otf': 'application/font-sfnt',
+        'ttf': 'application/font-sfnt',
+        'woff': 'application/font-woff',
+        'eot': 'application/vnd.ms-fontobject',
+        'svg': 'image/svg+xml',
+}
+
+def content_type(fname):
+    suffix = os.path.splitext(fname)[1][1:]
+    return content_types[suffix]
+
+vars = []
+
+for fname in sys.argv[1:]:
+    varname = filename_to_var(fname)
+    process_file(fname, varname)
+    vars.append( (fname, varname, os.path.getsize(fname), filename_to_web_path(fname)) )
+
+last_modified = time.strftime("%a, %d %b %Y %H:%M:%S %Z")
+
+print 'struct static_paths { const char *web_path; const char **content; off_t len; const char *last_modified; const char *content_type;};'
+print 'struct static_paths static_paths[] = {'
+for fname, varname, file_len, web_path in vars:
+    print '{"/%s", &%s, %d, "%s", "%s"},' % (web_path, varname, file_len, last_modified, content_type(fname))
+print '};'

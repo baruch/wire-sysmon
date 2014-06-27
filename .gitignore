@@ -4,3 +4,4 @@ wire-sysmon
 build
 build.ninja
 .gdb_history
+src/web.h
