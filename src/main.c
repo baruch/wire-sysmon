@@ -24,12 +24,14 @@ static wire_pool_t web_pool;
 #include <stdbool.h>
 #include <sys/timerfd.h>
 #include <time.h>
+#include <sys/utsname.h>
 
 #include "libwire/test/utils.h"
 
 #define IF_MODIFIED_SINCE_HDR "If-Modified-Since"
 #define WEB_POOL_SIZE 8
 #define MODULE_PREFIX "/module.php?module="
+#define WR_BUF_LEN 1024
 
 static wire_thread_t wire_thread_main;
 static wire_t wire_accept;
@@ -218,7 +220,15 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 
 static off_t module_hostname(char *buf)
 {
-	strcpy(buf, "{\"module\": \"hostname\", \"data\": \"test-hostname\"}");
+	struct utsname uts;
+	int ret;
+
+	ret = uname(&uts);
+	if (ret < 0) {
+		snprintf(buf, WR_BUF_LEN, "{\"module\": \"hostname\", \"error\": \"failed to do uname: %m\"}");
+	} else {
+		snprintf(buf, WR_BUF_LEN, "{\"module\": \"hostname\", \"data\": \"%s\"}", uts.nodename);
+	}
 	return strlen(buf);
 }
 
@@ -283,7 +293,7 @@ static int on_message_complete(http_parser *parser)
 
 	bool only_head = parser->method == HTTP_HEAD;
 
-	char wrbuf[1024];
+	char wrbuf[WR_BUF_LEN];
 	const char *buf = request_get(filename, &buf_len, &last_modified, &content_type, wrbuf);
 
 	DEBUG("If modified since is '%s' last modified is '%s'", d->if_modified_since, last_modified);
