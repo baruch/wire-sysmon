@@ -14,6 +14,7 @@ static wire_t wire_accept;
 static wire_pool_t web_pool;
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <memory.h>
@@ -218,6 +219,10 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 		return;
 }
 
+#define MOD_ERR(name, msg, ...) \
+	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"error\": \"" msg "\"}", ##__VA_ARGS__); \
+	return strlen(buf);
+
 static off_t module_hostname(char *buf)
 {
 	struct utsname uts;
@@ -225,11 +230,34 @@ static off_t module_hostname(char *buf)
 
 	ret = uname(&uts);
 	if (ret < 0) {
-		snprintf(buf, WR_BUF_LEN, "{\"module\": \"hostname\", \"error\": \"failed to do uname: %m\"}");
+		MOD_ERR("hostname", "failed to do uname: %m");
 	} else {
 		snprintf(buf, WR_BUF_LEN, "{\"module\": \"hostname\", \"data\": \"%s\"}", uts.nodename);
 	}
 	return strlen(buf);
+}
+
+static off_t module_uptime(char *buf)
+{
+	int fd = wio_open("/proc/uptime", O_RDONLY, 0);
+	if (fd < 0) {
+		MOD_ERR("uptime", "failed to open /proc/uptime: %m");
+	}
+
+	char data[32];
+	int ret = wio_pread(fd, data, sizeof(data), 0);
+	if (ret < 0) {
+		MOD_ERR("uptime", "failed to read from /proc/uptime: %m");
+	}
+
+	wio_close(fd);
+
+	int uptime = atoi(data);
+	int days = uptime / (24 * 60*60);
+	int hours = (uptime - days*24*60*60) / (60*60);
+	int minutes = (uptime - days*24*60*60 - hours * 60*60) / 60;
+
+	return snprintf(buf, WR_BUF_LEN, "{\"module\": \"uptime\", \"data\": \"%d days %d hours %d minutes\"}", days, hours, minutes);
 }
 
 struct modules {
@@ -237,6 +265,7 @@ struct modules {
 	off_t (*func)(char *buf);
 } modules[] = {
 	{"hostname", module_hostname},
+	{"uptime", module_uptime},
 };
 
 #include "web.h"
