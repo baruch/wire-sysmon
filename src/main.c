@@ -225,7 +225,7 @@ static const char *request_get(const char *filename, off_t *buf_len, const char 
 
 	for (i = 0; i < sizeof(static_paths)/sizeof(static_paths[0]); i++) {
 		struct static_paths *spath = &static_paths[i];
-		if (strcmp(filename, spath->web_path) == 0) {
+		if (strncmp(filename, spath->web_path, strlen(spath->web_path)) == 0) {
 			*buf_len = spath->len;
 			*last_modified = spath->last_modified;
 			*content_type = spath->content_type;
