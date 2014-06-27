@@ -13,6 +13,7 @@ static wire_thread_t wire_thread_main;
 static wire_t wire_accept;
 static wire_pool_t web_pool;
 
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -281,7 +282,16 @@ static off_t module_time(char *buf)
 
 static int get_num_cores(void)
 {
-	return 1;
+	cpu_set_t cpumask[128];
+	CPU_ZERO_S(128, cpumask);
+	sched_getaffinity(0, 128, cpumask);
+	return CPU_COUNT_S(128, cpumask);
+}
+
+static off_t module_numcores(char *buf)
+{
+	int num_cores = get_num_cores();
+	return MOD_OK("numberofcores", "%d", num_cores);
 }
 
 static off_t module_loadavg(char *buf)
@@ -311,6 +321,7 @@ struct modules {
 	{"issue", module_issue},
 	{"time", module_time},
 	{"loadavg", module_loadavg},
+	{"numberofcores", module_numcores},
 };
 
 #include "web.h"
