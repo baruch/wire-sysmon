@@ -223,6 +223,9 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"error\": \"" msg "\"}", ##__VA_ARGS__), strlen(buf)
 
 #define MOD_OK(name, msg, ...) \
+	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": " msg "}", ##__VA_ARGS__), strlen(buf)
+
+#define MOD_OK_STR(name, msg, ...) \
 	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": \"" msg "\"}", ##__VA_ARGS__), strlen(buf)
 
 static off_t module_hostname(char *buf)
@@ -234,7 +237,7 @@ static off_t module_hostname(char *buf)
 	if (ret < 0) {
 		return MOD_ERR("hostname", "failed to do uname: %m");
 	} else {
-		return MOD_OK("hostname", "%s", uts.nodename);
+		return MOD_OK_STR("hostname", "%s", uts.nodename);
 	}
 }
 
@@ -258,12 +261,12 @@ static off_t module_uptime(char *buf)
 	int hours = (uptime - days*24*60*60) / (60*60);
 	int minutes = (uptime - days*24*60*60 - hours * 60*60) / 60;
 
-	return MOD_OK("uptime", "%d days %d hours %d minutes", days, hours, minutes);
+	return MOD_OK_STR("uptime", "%d days %d hours %d minutes", days, hours, minutes);
 }
 
 static off_t module_issue(char *buf)
 {
-	return MOD_OK("issue", "unknown OS");
+	return MOD_OK_STR("issue", "unknown OS");
 }
 
 static off_t module_time(char *buf)
@@ -273,7 +276,30 @@ static off_t module_time(char *buf)
 
 	ctime_r(&now, data);
 	data[strlen(data)-1] = 0;
-	return MOD_OK("time", "%s", data);
+	return MOD_OK_STR("time", "%s", data);
+}
+
+static int get_num_cores(void)
+{
+	return 1;
+}
+
+static off_t module_loadavg(char *buf)
+{
+	int num_cores = get_num_cores();
+	double loadavg[3];
+	int ret = getloadavg(loadavg, 3);
+	if (ret < 0) {
+		return MOD_ERR("loadavg", "Failed to read load average: %m");
+	}
+
+	float min1_frac = loadavg[0];
+	int min1_pcnt = min1_frac * 100.0 / num_cores;
+	float min5_frac = loadavg[1];
+	int min5_pcnt = min5_frac * 100.0 / num_cores;
+	float min15_frac = loadavg[2];
+	int min15_pcnt = min15_frac * 100.0 / num_cores;
+	return MOD_OK("loadavg", "[[\"%.02f\", %d], [\"%.02f\", %d], [\"%.02f\", %d]]", min1_frac, min1_pcnt, min5_frac, min5_pcnt, min15_frac, min15_pcnt);
 }
 
 struct modules {
@@ -284,6 +310,7 @@ struct modules {
 	{"uptime", module_uptime},
 	{"issue", module_issue},
 	{"time", module_time},
+	{"loadavg", module_loadavg},
 };
 
 #include "web.h"
