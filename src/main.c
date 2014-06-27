@@ -220,6 +220,9 @@ static const char *request_get(const char *filename, off_t *buf_len, const char 
 {
 	unsigned i;
 
+	if (strcmp(filename, "/") == 0)
+		filename = "/index.html";
+
 	for (i = 0; i < sizeof(static_paths)/sizeof(static_paths[0]); i++) {
 		struct static_paths *spath = &static_paths[i];
 		if (strcmp(filename, spath->web_path) == 0) {
