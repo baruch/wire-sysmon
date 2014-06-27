@@ -220,8 +220,10 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 }
 
 #define MOD_ERR(name, msg, ...) \
-	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"error\": \"" msg "\"}", ##__VA_ARGS__); \
-	return strlen(buf);
+	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"error\": \"" msg "\"}", ##__VA_ARGS__), strlen(buf)
+
+#define MOD_OK(name, msg, ...) \
+	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": \"" msg "\"}", ##__VA_ARGS__), strlen(buf)
 
 static off_t module_hostname(char *buf)
 {
@@ -230,24 +232,23 @@ static off_t module_hostname(char *buf)
 
 	ret = uname(&uts);
 	if (ret < 0) {
-		MOD_ERR("hostname", "failed to do uname: %m");
+		return MOD_ERR("hostname", "failed to do uname: %m");
 	} else {
-		snprintf(buf, WR_BUF_LEN, "{\"module\": \"hostname\", \"data\": \"%s\"}", uts.nodename);
+		return MOD_OK("hostname", "%s", uts.nodename);
 	}
-	return strlen(buf);
 }
 
 static off_t module_uptime(char *buf)
 {
 	int fd = wio_open("/proc/uptime", O_RDONLY, 0);
 	if (fd < 0) {
-		MOD_ERR("uptime", "failed to open /proc/uptime: %m");
+		return MOD_ERR("uptime", "failed to open /proc/uptime: %m");
 	}
 
 	char data[32];
 	int ret = wio_pread(fd, data, sizeof(data), 0);
 	if (ret < 0) {
-		MOD_ERR("uptime", "failed to read from /proc/uptime: %m");
+		return MOD_ERR("uptime", "failed to read from /proc/uptime: %m");
 	}
 
 	wio_close(fd);
@@ -257,7 +258,12 @@ static off_t module_uptime(char *buf)
 	int hours = (uptime - days*24*60*60) / (60*60);
 	int minutes = (uptime - days*24*60*60 - hours * 60*60) / 60;
 
-	return snprintf(buf, WR_BUF_LEN, "{\"module\": \"uptime\", \"data\": \"%d days %d hours %d minutes\"}", days, hours, minutes);
+	return MOD_OK("uptime", "%d days %d hours %d minutes", days, hours, minutes);
+}
+
+static off_t module_issue(char *buf)
+{
+	return MOD_OK("issue", "unknown OS");
 }
 
 struct modules {
@@ -266,6 +272,7 @@ struct modules {
 } modules[] = {
 	{"hostname", module_hostname},
 	{"uptime", module_uptime},
+	{"issue", module_issue},
 };
 
 #include "web.h"
