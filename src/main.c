@@ -252,6 +252,7 @@ static off_t module_uptime(char *buf)
 	char data[32];
 	int ret = wio_pread(fd, data, sizeof(data), 0);
 	if (ret < 0) {
+		wio_close(fd);
 		return MOD_ERR("uptime", "failed to read from /proc/uptime: %m");
 	}
 
