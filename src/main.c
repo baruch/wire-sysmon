@@ -313,6 +313,62 @@ static off_t module_loadavg(char *buf)
 	return MOD_OK("loadavg", "[[\"%.02f\", %d], [\"%.02f\", %d], [\"%.02f\", %d]]", min1_frac, min1_pcnt, min5_frac, min5_pcnt, min15_frac, min15_pcnt);
 }
 
+static off_t module_mem(char *buf)
+{
+	int fd = wio_open("/proc/meminfo", O_RDONLY, 0);
+	if (fd < 0) {
+		return MOD_ERR("mem", "Failed to open /proc/meminfo: %m");
+	}
+
+	char data[2048];
+	int ret = wio_pread(fd, data, sizeof(data), 0);
+	if (ret < 0) {
+		wio_close(fd);
+		return MOD_ERR("mem", "Failed to read from /proc/meminfo: %m");
+	}
+
+	wio_close(fd);
+
+	// Parse the file now
+	int mem_total = 0;
+	int mem_free = 0;
+	int mem_buffers = 0;
+	int mem_cached = 0;
+
+	char *start = data;
+	char *end = data + ret;
+	while (start && start < end) {
+		char *name_end = memchr(start, ':', ret - (start - data));
+		if (name_end == NULL)
+			break;
+
+		if (memcmp(start, "MemTotal", name_end - start) == 0) {
+			mem_total = atoi(name_end+1);
+		} else if (memcmp(start, "MemFree", name_end - start) == 0) {
+			mem_free = atoi(name_end+1);
+		} else if (memcmp(start, "Buffers", name_end - start) == 0) {
+			mem_buffers = atoi(name_end+1);
+		} else if (memcmp(start, "Cached", name_end - start) == 0) {
+			mem_cached = atoi(name_end+1);
+		}
+
+		if (mem_total && mem_free && mem_buffers && mem_cached) {
+			// We got everything we want, we can short circuit the rest of the parsing
+			break;
+		}
+
+		start = memchr(name_end, '\n', ret - (name_end - data));
+		if (start) {
+			// Skip the \n to the start of the next line
+			start++;
+		}
+	}
+
+	mem_free += mem_buffers + mem_cached;
+	int mem_used = mem_total - mem_free;
+	return MOD_OK("mem", "[\"Mem:\",\"%d\",\"%d\",\"%d\"]", mem_total/1024, mem_used/1024, mem_free/1024);
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -323,6 +379,7 @@ struct modules {
 	{"time", module_time},
 	{"loadavg", module_loadavg},
 	{"numberofcores", module_numcores},
+	{"mem", module_mem},
 };
 
 #include "web.h"
