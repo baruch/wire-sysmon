@@ -456,6 +456,66 @@ static off_t module_df(char *buf)
 	return next_write;
 }
 
+static off_t module_where(char *buf)
+{
+	const char *apps[] = {
+		"php", "node", "mysql", "vim", "python", "ruby", "java", "apache2", "nginx", "openssl", "vsftpd", "make",
+	};
+
+	unsigned i;
+	int first = 1;
+	int next_write = 0;
+	next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"where\", \"data\": [");
+
+	const char *path = getenv("PATH");
+	const char *pathend = path + strlen(path);
+
+	for (i = 0; i < sizeof(apps)/sizeof(apps[0]); i++) {
+		int app_found = 0;
+		const char *pathitem = path;
+		const char *end;
+		for (pathitem = path, end = strchr(pathitem, ':');
+		     pathitem && pathitem < pathend;
+			 pathitem = end+1, end = strchr(pathitem, ':'))
+		{
+			char filepath[128];
+			if (end == NULL)
+				end = pathitem + strlen(pathitem);
+
+			if (end - pathitem + 1 + strlen(apps[i]) + 1 > sizeof(filepath))
+				continue;
+
+			memcpy(filepath, pathitem, end - pathitem);
+			filepath[end-pathitem] = '/';
+			strcpy(filepath + (end-pathitem+1), apps[i]);
+
+			struct stat stbuf;
+			int ret = wio_stat(filepath, &stbuf);
+			if (ret >= 0 && S_ISREG(stbuf.st_mode)) {
+				next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%s\", \"%s\"]",
+						(first ? ' ' : ','),
+						apps[i],
+						filepath
+						);
+				first = 0;
+				app_found = 1;
+				break;
+			}
+		}
+
+		if (!app_found) {
+			next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%s\", \"Not Installed\"]",
+					(first ? ' ' : ','),
+					apps[i]
+					);
+			first = 0;
+		}
+	}
+
+	next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -468,6 +528,7 @@ struct modules {
 	{"numberofcores", module_numcores},
 	{"mem", module_mem},
 	{"df", module_df},
+	{"where", module_where},
 };
 
 #include "web.h"
