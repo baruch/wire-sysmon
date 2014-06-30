@@ -27,6 +27,7 @@ static wire_pool_t web_pool;
 #include <sys/timerfd.h>
 #include <time.h>
 #include <sys/utsname.h>
+#include <inttypes.h>
 
 #include "libwire/test/utils.h"
 
@@ -369,6 +370,92 @@ static off_t module_mem(char *buf)
 	return MOD_OK("mem", "[\"Mem:\",\"%d\",\"%d\",\"%d\"]", mem_total/1024, mem_used/1024, mem_free/1024);
 }
 
+static const char *calc_suffix(uint64_t val, uint64_t *pdivider)
+{
+	static struct {
+		uint64_t val;
+		const char *suffix;
+	} suffixes[] = {
+		{1024UL * 1024UL * 1024UL * 1024UL, "TB"},
+		{1024 * 1024 * 1024, "GB"},
+		{1024 * 1024, "MB"},
+		{1024, "KB"},
+	};
+
+	unsigned i;
+	for (i = 0; i < sizeof(suffixes)/sizeof(suffixes[0]); i++) {
+		if (val >= suffixes[i].val) {
+			*pdivider = suffixes[i].val;
+			return suffixes[i].suffix;
+		}
+	}
+
+	*pdivider = 1;
+	return "B";
+}
+
+static off_t module_df(char *buf)
+{
+	int fd = wio_open("/proc/mounts", O_RDONLY, 0);
+	if (fd < 0) {
+		return MOD_ERR("mem", "Failed to open /proc/mounts: %m");
+	}
+
+	char data[2048];
+	int ret = wio_pread(fd, data, sizeof(data), 0);
+	if (ret < 0) {
+		wio_close(fd);
+		return MOD_ERR("mem", "Failed to read from /proc/mounts: %m");
+	}
+	data[ret] = 0; // Null-terminate the string
+
+	wio_close(fd);
+
+	int next_write = 0;
+	next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"mem\", \"data\": [");
+
+	char *saveptr;
+	char *line = strtok_r(data, "\n", &saveptr);
+	int first = 1;
+	while (line) {
+		// Parse the line
+		char *line_saveptr;
+		char *dev = strtok_r(line, " \t", &line_saveptr);
+		char *mount_point = strtok_r(NULL, " \t", &line_saveptr);
+
+		if (dev[0] == '/' || strcmp(dev, "tmpfs") == 0 || strcmp(dev, "udev") == 0) {
+			// Interesting device (disk or ram based)
+			// TODO: Convert to wio_statfs
+			struct statfs sfs;
+			ret = statfs(mount_point, &sfs);
+			if (ret >= 0) {
+				uint64_t size_byte = sfs.f_blocks * sfs.f_bsize;
+				uint64_t free_byte = sfs.f_bfree * sfs.f_bsize;
+				uint64_t used_byte = size_byte - free_byte;
+				uint64_t pcnt = used_byte * 100 / size_byte;
+				uint64_t divider;
+				const char *suffix = calc_suffix(size_byte, &divider);
+				next_write += snprintf(buf+next_write, WR_BUF_LEN - next_write, "%c[\"%s\", \"%"PRIu64"%s\", \"%"PRIu64"%s\", \"%"PRIu64"%s\", \"%"PRIu64"%%\", \"%s\"]",
+						first ? ' ' : ',',
+						dev,
+						size_byte / divider, suffix,
+						used_byte / divider, suffix,
+						free_byte / divider, suffix,
+						pcnt,
+						mount_point
+						);
+				first = 0;
+			}
+		}
+
+		// Next line
+		line = strtok_r(NULL, "\n", &saveptr);
+	}
+
+	next_write += snprintf(buf+next_write, WR_BUF_LEN - next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -380,6 +467,7 @@ struct modules {
 	{"loadavg", module_loadavg},
 	{"numberofcores", module_numcores},
 	{"mem", module_mem},
+	{"df", module_df},
 };
 
 #include "web.h"
