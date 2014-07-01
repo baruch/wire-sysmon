@@ -222,7 +222,7 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 }
 
 #define MOD_ERR(name, msg, ...) \
-	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"error\": \"" msg "\"}", ##__VA_ARGS__), strlen(buf)
+	snprintf(buf, WR_BUF_LEN, "{\"module\": \"%s\", \"error\": \"" msg "\"}", name, ##__VA_ARGS__), strlen(buf)
 
 #define MOD_OK(name, msg, ...) \
 	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": " msg "}", ##__VA_ARGS__), strlen(buf)
@@ -586,7 +586,7 @@ struct modules {
 };
 
 #include "web.h"
-static const char *request_get(const char *filename, off_t *buf_len, const char **last_modified, const char **content_type, char *wrbuf)
+static const char *request_get(const char *filename, off_t *buf_len, const char **last_modified, const char **content_type, char *buf)
 {
 	unsigned i;
 
@@ -607,17 +607,21 @@ static const char *request_get(const char *filename, off_t *buf_len, const char 
 	if (strncmp(filename, MODULE_PREFIX, strlen(MODULE_PREFIX)) != 0)
 		return NULL;
 
+	*last_modified = "";
+	*content_type = "text/json";
+
+	const char *mod_name = filename + strlen(MODULE_PREFIX);
 	for (i = 0; i < sizeof(modules)/sizeof(modules[0]); i++) {
 		const struct modules *mod = &modules[i];
-		if (strcmp(mod->name, filename + strlen(MODULE_PREFIX)) == 0) {
-			*last_modified = "";
-			*buf_len = mod->func(wrbuf);
-			*content_type = "text/json";
-			return wrbuf;
+		if (strcmp(mod->name, mod_name) == 0) {
+			*buf_len = mod->func(buf);
+			return buf;
 		}
 	}
 
-	return NULL;
+	// No module found, return an error
+	*buf_len = MOD_ERR(mod_name, "Unknown module name");
+	return buf;
 }
 
 static int on_message_complete(http_parser *parser)
