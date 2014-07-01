@@ -516,6 +516,59 @@ static off_t module_where(char *buf)
 	return next_write;
 }
 
+static bool parse_dnsmasq(char *buf, int *pnext_write)
+{
+	int fd = wio_open("/var/lib/misc/dnsmasq.leases", O_RDONLY, 0);
+	if (fd < 0)
+		return false;
+
+	char data[2048];
+	int ret = wio_pread(fd, data, sizeof(2048), 0);
+	wio_close(fd);
+	if (ret < 0)
+		return false;
+
+	data[ret] = 0; // terminate string
+
+	int next_write = *pnext_write;
+	char *saveptr;
+	char *line;
+	int first = 1;
+	for (line = strtok_r(data, "\n", &saveptr); line; strtok_r(NULL, "\n", &saveptr)) {
+		// Parse the line
+		char *line_saveptr;
+		char *timestamp = strtok_r(line, " \t", &line_saveptr);
+		char *mac = strtok_r(NULL, " \t", &line_saveptr);
+		char *ip = strtok_r(NULL, " \t", &line_saveptr);
+		char *name = strtok_r(NULL, " \t", &line_saveptr);
+
+		if (timestamp && mac && ip && name) {
+			time_t ts = atoi(timestamp);
+			char ts_fmt[32];
+
+			ctime_r(&ts, ts_fmt);
+
+			next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%s\",\"%s\",\"%s\",\"%s\"]",
+					(first ? ' ' : ','),
+					ts_fmt, mac, ip, name
+					);
+		}
+	}
+	*pnext_write = next_write;
+
+	return false;
+}
+
+static off_t module_dhcpleases(char *buf)
+{
+	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"dhcpleases\",\"data\":[");
+
+	parse_dnsmasq(buf, &next_write) /* TODO: || parse_dhcpd_leases(buf, &next_write)*/;
+
+	next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -529,6 +582,7 @@ struct modules {
 	{"mem", module_mem},
 	{"df", module_df},
 	{"where", module_where},
+	{"dhcpleases", module_dhcpleases},
 };
 
 #include "web.h"
