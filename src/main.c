@@ -28,6 +28,9 @@ static wire_pool_t web_pool;
 #include <time.h>
 #include <sys/utsname.h>
 #include <inttypes.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 #include "libwire/test/utils.h"
 
@@ -569,6 +572,84 @@ static off_t module_dhcpleases(char *buf)
 	return next_write;
 }
 
+static off_t module_ip_external(char *buf, off_t next_write)
+{
+	static const char *hostname = "ipecho.net";
+	static const char *req = "GET /plain HTTP/1.0\r\nUser-Agent: wire-sysmon\r\nHost: ipecho.net\r\nAccept: */*\r\n\r\n";
+	const char *external_ip = "0.0.0.0";
+
+	struct addrinfo hints;
+	struct addrinfo *result, *rp;
+	int ret;
+	int sfd = -1;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
+	hints.ai_socktype = SOCK_STREAM; /* Datagram socket */
+	hints.ai_flags = 0;
+	hints.ai_protocol = 0;          /* Any protocol */
+	hints.ai_canonname = NULL;
+	hints.ai_addr = NULL;
+	hints.ai_next = NULL;
+
+	ret = getaddrinfo(hostname, "http", &hints, &result);
+	if (ret != 0)
+		goto Exit;
+
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		if (sfd == -1)
+			continue;
+
+		if (connect(sfd, rp->ai_addr, rp->ai_addrlen) == 0)
+			break;                  /* Success */
+
+		close(sfd);
+	}
+
+	freeaddrinfo(result);           /* No longer needed */
+
+	if (rp == NULL) // No address succeeded
+		goto Exit;
+
+	if (write(sfd, req, strlen(req)) != (int)strlen(req))
+		goto Exit;
+
+	char data[256];
+	int read_bytes = 0;
+	while (read_bytes < (int)sizeof(data)) {
+		ret = read(sfd, data + read_bytes, sizeof(data) - read_bytes);
+		if (ret < 0)
+			goto Exit;
+		else if (ret == 0)
+			break;
+		read_bytes += ret;
+	}
+	if (read_bytes == sizeof(data))
+		read_bytes--;
+	data[read_bytes] = 0;
+
+	external_ip = strrchr(data, '\n');
+	if (external_ip)
+		external_ip++;
+	else
+		external_ip = "0.0.0.0";
+
+Exit:
+	close(sfd);
+	return snprintf(buf, WR_BUF_LEN - next_write, "[\"external ip\", \"%s\"]", external_ip);
+}
+
+static off_t module_ip(char *buf)
+{
+	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"ip\",\"data\":[");
+
+	next_write += module_ip_external(buf+next_write, next_write);
+
+	next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -583,6 +664,7 @@ struct modules {
 	{"df", module_df},
 	{"where", module_where},
 	{"dhcpleases", module_dhcpleases},
+	{"ip", module_ip},
 };
 
 #include "web.h"
@@ -858,7 +940,7 @@ int main()
 	wire_stack_fault_detector_install();
 	wire_fd_init();
 	wire_io_init(8);
-	wire_pool_init(&web_pool, NULL, WEB_POOL_SIZE, 4*4096);
+	wire_pool_init(&web_pool, NULL, WEB_POOL_SIZE, 8*4096);
 	wire_init(&wire_accept, "accept", accept_run, NULL, WIRE_STACK_ALLOC(4096));
 	wire_thread_run();
 	return 0;
