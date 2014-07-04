@@ -3,6 +3,7 @@
 #include "wire_pool.h"
 #include "wire_stack.h"
 #include "wire_io.h"
+#include "wire_net.h"
 #include "macros.h"
 #include "http_parser.h"
 
@@ -581,7 +582,7 @@ static off_t module_ip_external(char *buf, off_t next_write)
 	struct addrinfo hints;
 	struct addrinfo *result, *rp;
 	int ret;
-	int sfd = -1;
+	wire_net_t net;
 
 	memset(&hints, 0, sizeof(struct addrinfo));
 	hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
@@ -592,19 +593,23 @@ static off_t module_ip_external(char *buf, off_t next_write)
 	hints.ai_addr = NULL;
 	hints.ai_next = NULL;
 
-	ret = getaddrinfo(hostname, "http", &hints, &result);
+	ret = wio_getaddrinfo(hostname, "http", &hints, &result);
 	if (ret != 0)
 		goto Exit;
 
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		sfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+		int sfd = socket(rp->ai_family, rp->ai_socktype|SOCK_NONBLOCK|SOCK_CLOEXEC, rp->ai_protocol);
 		if (sfd == -1)
 			continue;
 
-		if (connect(sfd, rp->ai_addr, rp->ai_addrlen) == 0)
+		wire_net_init(&net, sfd);
+		wire_timeout_reset(&net.tout, 10000);
+
+		ret = wire_net_connect(&net, rp->ai_addr, rp->ai_addrlen);
+		if (ret == 0)
 			break;                  /* Success */
 
-		close(sfd);
+		wire_net_close(&net);
 	}
 
 	freeaddrinfo(result);           /* No longer needed */
@@ -612,22 +617,25 @@ static off_t module_ip_external(char *buf, off_t next_write)
 	if (rp == NULL) // No address succeeded
 		goto Exit;
 
-	if (write(sfd, req, strlen(req)) != (int)strlen(req))
+	size_t sent;
+	ret = wire_net_write(&net, req, strlen(req), &sent);
+	if (ret != 0 || sent != strlen(req)) {
+		wire_net_close(&net);
 		goto Exit;
+	}
 
 	char data[256];
-	int read_bytes = 0;
-	while (read_bytes < (int)sizeof(data)) {
-		ret = read(sfd, data + read_bytes, sizeof(data) - read_bytes);
-		if (ret < 0)
-			goto Exit;
-		else if (ret == 0)
-			break;
-		read_bytes += ret;
-	}
-	if (read_bytes == sizeof(data))
-		read_bytes--;
-	data[read_bytes] = 0;
+	size_t rcvd;
+	size_t total_rcvd = 0;
+	do {
+		ret = wire_net_read_any(&net, data + total_rcvd, sizeof(data)-total_rcvd, &rcvd);
+		if (ret == 0)
+			total_rcvd += rcvd;
+	} while (ret >= 0 && total_rcvd < sizeof(data));
+	if (total_rcvd == sizeof(data))
+		total_rcvd--;
+	data[total_rcvd] = 0;
+	wire_net_close(&net);
 
 	external_ip = strrchr(data, '\n');
 	if (external_ip)
@@ -636,7 +644,6 @@ static off_t module_ip_external(char *buf, off_t next_write)
 		external_ip = "0.0.0.0";
 
 Exit:
-	close(sfd);
 	return snprintf(buf, WR_BUF_LEN - next_write, "[\"external ip\", \"%s\"]", external_ip);
 }
 
