@@ -226,13 +226,13 @@ static void send_cached_file(http_parser *parser, const char *last_modified, con
 }
 
 #define MOD_ERR(name, msg, ...) \
-	snprintf(buf, WR_BUF_LEN, "{\"module\": \"%s\", \"error\": \"" msg "\"}", name, ##__VA_ARGS__), strlen(buf)
+	({snprintf(buf, WR_BUF_LEN, "{\"module\": \"%s\", \"error\": \"" msg "\"}", name, ##__VA_ARGS__); strlen(buf);})
 
 #define MOD_OK(name, msg, ...) \
-	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": " msg "}", ##__VA_ARGS__), strlen(buf)
+	({snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": " msg "}", ##__VA_ARGS__); strlen(buf);})
 
 #define MOD_OK_STR(name, msg, ...) \
-	snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": \"" msg "\"}", ##__VA_ARGS__), strlen(buf)
+	({snprintf(buf, WR_BUF_LEN, "{\"module\": \"" name "\", \"data\": \"" msg "\"}", ##__VA_ARGS__); strlen(buf);})
 
 static off_t module_hostname(char *buf)
 {
@@ -709,7 +709,7 @@ static const char *request_get(const char *filename, off_t *buf_len, const char 
 	}
 
 	// No module found, return an error
-	*buf_len = MOD_ERR(mod_name, "Unknown module name");
+	*buf_len = MOD_ERR(mod_name, "Unknown module name %s", mod_name);
 	return buf;
 }
 
