@@ -647,11 +647,48 @@ Exit:
 	return snprintf(buf, WR_BUF_LEN - next_write, "[\"external ip\", \"%s\"]", external_ip);
 }
 
+static off_t module_ip_internal(char *buf, off_t next_write)
+{
+	struct ifaddrs *ifap = NULL;
+	struct ifaddrs *ifcur;
+	int ret;
+
+	ret = wio_getifaddrs(&ifap);
+	if (ret < 0)
+		return next_write;
+
+	for (ifcur = ifap; ifcur; ifcur = ifcur->ifa_next) {
+		if (ifcur->ifa_addr == NULL)
+			continue;
+
+		const int family = ifcur->ifa_addr->sa_family;
+		if (family != AF_INET && family != AF_INET6)
+			continue;
+
+		char host[NI_MAXHOST];
+		ret = getnameinfo(ifcur->ifa_addr, (family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6)),
+				host, NI_MAXHOST,
+				NULL, 0,
+				NI_NUMERICHOST);
+		if (ret < 0)
+			continue;
+
+		if (memcmp(host, "fe80", 4) == 0)
+			continue;
+
+		next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, ",[\"%s\",\"%s\"]", ifcur->ifa_name, host);
+	}
+
+	freeifaddrs(ifap);
+	return next_write;
+}
+
 static off_t module_ip(char *buf)
 {
 	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"ip\",\"data\":[");
 
 	next_write += module_ip_external(buf+next_write, next_write);
+	next_write = module_ip_internal(buf, next_write);
 
 	next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "]}");
 	return next_write;
