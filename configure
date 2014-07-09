@@ -151,7 +151,7 @@ bin2h_src = file_list('src/web', ['html', 'js', 'css', 'woff', 'svg', 'ttf', 'eo
 bin2h_out = n.build('src/web.h', 'bin2h', bin2h_src, implicit=['bin2h'])
 
 # wire-sysmon app
-c_files = c_files_list('src') + ['libwire/test/utils.c']
+c_files = ['src/wire-sysmon.c', 'libwire/test/utils.c']
 base_objs = c_to_o([c_file for c_file in c_files if not c_file.endswith('main.c')])
 main_obj = c_to_o([c_file for c_file in c_files if c_file.endswith('main.c')], implicit=bin2h_out)
 o_files = main_obj + base_objs
