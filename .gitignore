@@ -1,6 +1,7 @@
 *.pyc
 *.o
 wire-sysmon
+wire-pktpair-server
 build
 build.ninja
 .gdb_history
