@@ -4,6 +4,7 @@
 #include "wire_stack.h"
 #include "wire_io.h"
 #include "wire_net.h"
+#include "wire_log.h"
 #include "macros.h"
 #include "http_parser.h"
 
@@ -15,6 +16,7 @@ static wire_pool_t tcp_pool;
 
 #define TCP_POOL_SIZE 256
 
+#include <syslog.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -61,24 +63,6 @@ struct msg_udp {
 };
 #pragma pack()
 
-static void xlog(const char *msg, ...)
-{
-	va_list ap;
-	char buf[128];
-	int n;
-
-	va_start(ap, msg);
-	n = vsnprintf(buf, sizeof(buf), msg, ap);
-	va_end(ap);
-
-	if (n > (int)sizeof(buf)-2)
-		n = sizeof(buf)-2;
-	buf[n] = '\n';
-	buf[n+1] = 0;
-
-	wio_write(2, buf, n+2); // Log to stderr
-}
-
 static int setup_udp_socket(uint16_t *port)
 {
 	int udp_fd = socket(AF_INET, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0);
@@ -90,7 +74,7 @@ static int setup_udp_socket(uint16_t *port)
 
 	int ret = bind(udp_fd, (struct sockaddr*)&addr, sizeof(addr));
 	if (ret < 0) {
-		xlog("Failed to bind to socket");
+		wire_log(WLOG_INFO, "Failed to bind to socket");
 		wio_close(udp_fd);
 		return -1;
 	}
@@ -98,7 +82,7 @@ static int setup_udp_socket(uint16_t *port)
 	socklen_t len = sizeof(addr);
 	ret = getsockname(udp_fd, (struct sockaddr*)&addr, &len);
 	if (ret < 0) {
-		xlog("Failed to get socket port");
+		wire_log(WLOG_INFO, "Failed to get socket port");
 		wio_close(udp_fd);
 		return -1;
 	}
@@ -121,7 +105,7 @@ static int recv_udp(wire_fd_state_t *udp_state, wire_net_t *tcp_net, struct msg_
 		addrlen = sizeof(remote_addr);
 		ret = recvfrom(udp_state->fd, msg_udp, sizeof(*msg_udp), 0, &remote_addr, &addrlen);
 		if (memcmp(&remote_addr, remote, sizeof(*remote)) != 0) {
-			xlog("Remote address didn't match");
+			wire_log(WLOG_INFO, "Remote address didn't match");
 			return -1;
 		}
 	} while (ret < 0);
@@ -147,7 +131,7 @@ static void tcp_run(void *arg)
 
 	udp_fd = setup_udp_socket(&msg_init.port);
 	if (udp_fd < 0) {
-		xlog("Setting up UDP socket failed");
+		wire_log(WLOG_INFO, "Setting up UDP socket failed");
 		wio_close(fd);
 		return;
 	}
@@ -161,7 +145,7 @@ static void tcp_run(void *arg)
 
 	ret = wire_net_write(&net, &msg_init, sizeof(msg_init), &sent);
 	if (ret < 0 || sent != sizeof(msg_init)) {
-		xlog("Failed to send UDP port to client");
+		wire_log(WLOG_INFO, "Failed to send UDP port to client");
 		goto Exit;
 	}
 
@@ -176,7 +160,7 @@ static void tcp_run(void *arg)
 	msg_result.nsec = (second_recv.tv_sec - first_recv.tv_sec) * 1000000000LL + (second_recv.tv_nsec - first_recv.tv_nsec);
 	ret = wire_net_write(&net, &msg_result, sizeof(msg_result), &sent);
 	if (ret < 0 || sent != sizeof(msg_result)) {
-		xlog("Failed to send data on TCP socket");
+		wire_log(WLOG_INFO, "Failed to send data on TCP socket");
 		goto Exit;
 	}
 
@@ -187,11 +171,11 @@ static void tcp_run(void *arg)
 	msg_udp.id = 0;
 	ret = sendto(udp_fd, &msg_udp, sizeof(msg_udp), 0, (struct sockaddr*)&remote_addr, addrlen);
 	if (ret < 0)
-		xlog("Failed to send first UDP packet: %m");
+		wire_log(WLOG_INFO, "Failed to send first UDP packet: %m");
 	msg_udp.id = 1;
 	ret = sendto(udp_fd, &msg_udp, sizeof(msg_udp), 0, (struct sockaddr*)&remote_addr, addrlen);
 	if (ret < 0)
-		xlog("Failed to send second UDP packet: %m");
+		wire_log(WLOG_INFO, "Failed to send second UDP packet: %m");
 
 Exit:
 	wio_close(udp_fd);
@@ -206,7 +190,7 @@ static void tcp_accept_run(void *arg)
 	if (fd < 0)
 		return;
 
-	xlog("Listening on port %d", port);
+	wire_log(WLOG_INFO, "Listening on port %d", port);
 
 	wire_fd_state_t fd_state;
 	wire_fd_mode_init(&fd_state, fd);
@@ -229,7 +213,7 @@ static void tcp_accept_run(void *arg)
 				// Let the wire copy the data in the tcp_sock_info info variable
 				wire_yield();
 			} else {
-				xlog("Web server is busy, sorry");
+				wire_log(WLOG_INFO, "Web server is busy, sorry");
 				close(info.fd);
 			}
 		} else {
@@ -238,7 +222,7 @@ static void tcp_accept_run(void *arg)
 				wire_fd_mode_read(&fd_state);
 				wire_fd_wait(&fd_state);
 			} else {
-				xlog("Error accepting from listening socket: %m");
+				wire_log(WLOG_INFO, "Error accepting from listening socket: %m");
 				break;
 			}
 		}
@@ -251,6 +235,7 @@ int main()
 	wire_stack_fault_detector_install();
 	wire_fd_init();
 	wire_io_init(1);
+	wire_log_init_syslog("wire-pktpair-server", LOG_PID, LOG_DAEMON);
 	wire_pool_init(&tcp_pool, NULL, TCP_POOL_SIZE, 4096);
 	wire_init(&wire_accept_tcp, "accept tcp", tcp_accept_run, NULL, WIRE_STACK_ALLOC(4096));
 	wire_thread_run();
