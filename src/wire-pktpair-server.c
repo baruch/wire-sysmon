@@ -110,8 +110,8 @@ static void tcp_run(void *arg)
 	wire_timeout_reset(&net.tout, 5*1000);
 	wire_fd_mode_init(&udp_state, udp_fd);
 
-	msg_init.version = 1;
-	msg_init.random = ((uint32_t)(long int)&msg_init) ^ time(NULL);
+	msg_init.version = ntohl(1);
+	msg_init.random = ntohl(rand() ^ time(NULL));
 
 	ret = wire_net_write(&net, &msg_init, sizeof(msg_init), &sent);
 	if (ret < 0 || sent != sizeof(msg_init)) {
@@ -201,6 +201,7 @@ static void tcp_accept_run(void *arg)
 
 int main()
 {
+	srand(time(NULL));
 	wire_thread_init(&wire_thread_main);
 	wire_stack_fault_detector_install();
 	wire_fd_init();
