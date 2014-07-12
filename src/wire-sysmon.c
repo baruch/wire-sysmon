@@ -579,42 +579,11 @@ static off_t module_ip_external(char *buf, off_t next_write)
 	static const char *req = "GET /plain HTTP/1.0\r\nUser-Agent: wire-sysmon\r\nHost: ipecho.net\r\nAccept: */*\r\n\r\n";
 	const char *external_ip = "0.0.0.0";
 
-	struct addrinfo hints;
-	struct addrinfo *result, *rp;
 	int ret;
 	wire_net_t net;
 
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
-	hints.ai_socktype = SOCK_STREAM; /* Datagram socket */
-	hints.ai_flags = 0;
-	hints.ai_protocol = 0;          /* Any protocol */
-	hints.ai_canonname = NULL;
-	hints.ai_addr = NULL;
-	hints.ai_next = NULL;
-
-	ret = wio_getaddrinfo(hostname, "http", &hints, &result);
-	if (ret != 0)
-		goto Exit;
-
-	for (rp = result; rp != NULL; rp = rp->ai_next) {
-		int sfd = socket(rp->ai_family, rp->ai_socktype|SOCK_NONBLOCK|SOCK_CLOEXEC, rp->ai_protocol);
-		if (sfd == -1)
-			continue;
-
-		wire_net_init(&net, sfd);
-		wire_timeout_reset(&net.tout, 10000);
-
-		ret = wire_net_connect(&net, rp->ai_addr, rp->ai_addrlen);
-		if (ret == 0)
-			break;                  /* Success */
-
-		wire_net_close(&net);
-	}
-
-	freeaddrinfo(result);           /* No longer needed */
-
-	if (rp == NULL) // No address succeeded
+	ret = wire_net_init_tcp_connected(&net, hostname, "http", 10000);
+	if (ret < 0)
 		goto Exit;
 
 	size_t sent;
