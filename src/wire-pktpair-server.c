@@ -17,25 +17,11 @@ static wire_pool_t tcp_pool;
 #define TCP_POOL_SIZE 256
 
 #include <syslog.h>
-#include <sched.h>
 #include <stdio.h>
-#include <stdarg.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <memory.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <stdbool.h>
-#include <sys/timerfd.h>
 #include <time.h>
-#include <sys/utsname.h>
-#include <inttypes.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
 
 #include "libwire/test/utils.h"
 
