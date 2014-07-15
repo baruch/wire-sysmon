@@ -74,12 +74,13 @@ static int recv_udp(wire_fd_state_t *udp_state, wire_net_t *tcp_net, struct msg_
 			return -1;
 		addrlen = sizeof(remote_addr);
 		ret = recvfrom(udp_state->fd, msg_udp, sizeof(*msg_udp), 0, &remote_addr, &addrlen);
-		if (memcmp(&remote_addr, remote, sizeof(*remote)) != 0) {
+		if (remote_addr.sin_addr.s_addr != remote->sin_addr.s_addr) {
 			wire_log(WLOG_INFO, "Remote address didn't match");
 			return -1;
 		}
 	} while (ret < 0);
 
+	remote->sin_port = remote_addr.sin_port;
 	return ret;
 }
 
@@ -98,6 +99,8 @@ static void tcp_run(void *arg)
 	wire_fd_state_t udp_state;
 	struct timespec first_recv, second_recv;
 	int udp_fd;
+
+	wire_log(WLOG_DEBUG, "sockaddr len=%d port=%u ip=%08x", addrlen, ntohs(remote_addr.sin_port), remote_addr.sin_addr.s_addr);
 
 	udp_fd = setup_udp_socket(&msg_init.port);
 	if (udp_fd < 0) {
@@ -206,7 +209,8 @@ int main()
 	wire_stack_fault_detector_install();
 	wire_fd_init();
 	wire_io_init(1);
-	wire_log_init_syslog("wire-pktpair-server", LOG_PID, LOG_DAEMON);
+	wire_log_init_stdout();
+	//wire_log_init_syslog("wire-pktpair-server", LOG_PID, LOG_DAEMON);
 	wire_pool_init(&tcp_pool, NULL, TCP_POOL_SIZE, 4096);
 	wire_init(&wire_accept_tcp, "accept tcp", tcp_accept_run, NULL, WIRE_STACK_ALLOC(4096));
 	wire_thread_run();

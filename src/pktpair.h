@@ -13,5 +13,6 @@ struct msg_udp {
 	uint32_t version;
 	uint32_t random;
 	uint32_t id;
+	char padding[512 - sizeof(uint32_t)*3];
 };
 #pragma pack()

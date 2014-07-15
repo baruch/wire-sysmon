@@ -4,10 +4,11 @@
 #include "wire_stack.h"
 #include "wire_io.h"
 #include "wire_net.h"
+#include "wire_log.h"
 #include "macros.h"
 #include "http_parser.h"
 
-#define xlog(...)
+#define xlog(fmt, ...) wire_log(WLOG_INFO, fmt, #__VA_ARGS__)
 #define DEBUG(...)
 
 static wire_thread_t wire_thread_main;
@@ -32,8 +33,10 @@ static wire_pool_t web_pool;
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <syslog.h>
 
 #include "libwire/test/utils.h"
+#include "pktpair.h"
 
 #define IF_MODIFIED_SINCE_HDR "If-Modified-Since"
 #define WEB_POOL_SIZE 8
@@ -582,7 +585,7 @@ static off_t module_ip_external(char *buf, off_t next_write)
 	int ret;
 	wire_net_t net;
 
-	ret = wire_net_init_tcp_connected(&net, hostname, "http", 10000);
+	ret = wire_net_init_tcp_connected(&net, hostname, "http", 10000, NULL, NULL);
 	if (ret < 0)
 		goto Exit;
 
@@ -663,6 +666,133 @@ static off_t module_ip(char *buf)
 	return next_write;
 }
 
+static int recv_udp(wire_fd_state_t *udp_state, wire_net_t *tcp_net, struct msg_udp *msg_udp, struct timespec *recv_time, struct sockaddr_in *remote)
+{
+	struct sockaddr_in remote_addr;
+	socklen_t addrlen;
+	int ret;
+
+	wire_fd_mode_read(udp_state);
+	do {
+		ret = wire_timeout_wait(&udp_state->wait, &tcp_net->tout);
+		clock_gettime(CLOCK_MONOTONIC, recv_time);
+		if (ret != 1)
+			return -1;
+		addrlen = sizeof(remote_addr);
+		ret = recvfrom(udp_state->fd, msg_udp, sizeof(*msg_udp), 0, &remote_addr, &addrlen);
+		if (remote_addr.sin_addr.s_addr != remote->sin_addr.s_addr) {
+			wire_log(WLOG_INFO, "Remote address didn't match");
+			return -1;
+		}
+	} while (ret < 0);
+
+	return ret;
+}
+
+static off_t module_speed(char *buf)
+{
+	float upload_speed = -1.0;
+	float download_speed = -1.0;
+	wire_net_t net;
+	struct sockaddr_in sockaddr;
+	socklen_t sockaddr_len = sizeof(sockaddr);
+	int ret;
+
+	ret = wire_net_init_tcp_connected(&net, "127.0.0.1", "3030", 10000, (struct sockaddr *)&sockaddr, &sockaddr_len);
+	if (ret < 0) {
+		wire_log(WLOG_NOTICE, "failed to connect to pktpair server");
+		goto Exit;
+	}
+
+	if (sockaddr_len == 0) {
+		wire_log(WLOG_NOTICE, "The sockaddr size is insufficient to store addresss, cant assess speed");
+		goto ExitNet;
+	}
+
+	wire_log(WLOG_DEBUG, "sockaddr len=%d port=%u ip=%08x", sockaddr_len, sockaddr.sin_port, sockaddr.sin_addr.s_addr);
+
+	struct msg_init msg_init;
+	size_t rcvd;
+	ret = wire_net_read_full(&net, &msg_init, sizeof(msg_init), &rcvd);
+	if (ret < 0 || rcvd != sizeof(msg_init)) {
+		wire_log(WLOG_NOTICE, "Failed to receive data from pktpair server, ret=%d, rcvd=%u", ret, rcvd);
+		goto ExitNet;
+	}
+
+	if (msg_init.version != ntohl(1)) {
+		wire_log(WLOG_NOTICE, "pktpair message was with incorrect version, seen %d", ntohl(msg_init.version));
+		goto ExitNet;
+	}
+
+	int udp_fd = socket(AF_INET, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0);
+
+	struct sockaddr_in addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = INADDR_ANY;
+	ret = bind(udp_fd, (struct sockaddr*)&addr, sizeof(addr));
+	if (ret < 0) {
+		wire_log(WLOG_INFO, "Failed to bind to socket");
+		goto ExitNet;
+	}
+
+	sockaddr.sin_port = msg_init.port;
+
+	struct msg_udp msg_udp;
+	msg_udp.version = ntohl(1);
+	msg_udp.random = msg_init.random;
+
+	// Send the packet pair
+	msg_udp.id = 1;
+	ret = sendto(udp_fd, &msg_udp, sizeof(msg_udp), 0, &sockaddr, sockaddr_len);
+	if (ret < 0) {
+		wire_log(WLOG_NOTICE, "Failed to send the first UDP packet: %m");
+		goto ExitNet;
+	}
+	msg_udp.id = 2;
+	ret = sendto(udp_fd, &msg_udp, sizeof(msg_udp), 0, &sockaddr, sockaddr_len);
+	if (ret < 0) {
+		wire_log(WLOG_NOTICE, "Failed to send the second UDP packet: %m");
+		goto ExitNet;
+	}
+
+	// Wait to receive the packet pair now
+	wire_fd_state_t udp_state;
+	wire_fd_mode_init(&udp_state, udp_fd);
+	struct timespec first_recv, second_recv;
+
+	if (recv_udp(&udp_state, &net, &msg_udp, &first_recv, &sockaddr) < 0) {
+		wire_log(WLOG_NOTICE, "Failed receiving the first UDP packet");
+		goto ExitNet;
+	}
+	if (recv_udp(&udp_state, &net, &msg_udp, &second_recv, &sockaddr) < 0) {
+		wire_log(WLOG_NOTICE, "Failed receiving the second UDP packet");
+		goto ExitNet;
+	}
+	wire_fd_mode_none(&udp_state);
+
+	struct msg_result msg_result;
+	ret = wire_net_read_full(&net, &msg_result, sizeof(msg_result), &rcvd);
+	if (ret < 0 || rcvd != sizeof(msg_result)) {
+		wire_log(WLOG_NOTICE, "Failed receiving the stats from the server");
+		goto ExitNet;
+	}
+	unsigned long nsec_recv = (second_recv.tv_sec - first_recv.tv_sec) * 1000000000LL + (second_recv.tv_nsec - first_recv.tv_nsec);
+	download_speed = (double)sizeof(msg_udp) / ((double)nsec_recv);
+	download_speed *= 1000000000.0 / 1024.0;
+
+	upload_speed = (double)sizeof(msg_udp) / ((double)msg_result.nsec);
+	upload_speed *= 1000000000.0 / 1024.0;
+
+ExitNet:
+	if (udp_fd >= 0)
+		wio_close(udp_fd);
+	wire_net_close(&net);
+
+Exit:
+	return MOD_OK("speed", "{\"upstream\":%f,\"downstream\":%f}", upload_speed, download_speed);
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -678,6 +808,7 @@ struct modules {
 	{"where", module_where},
 	{"dhcpleases", module_dhcpleases},
 	{"ip", module_ip},
+	{"speed", module_speed},
 };
 
 #include "web.h"
@@ -709,7 +840,9 @@ static const char *request_get(const char *filename, off_t *buf_len, const char 
 	for (i = 0; i < sizeof(modules)/sizeof(modules[0]); i++) {
 		const struct modules *mod = &modules[i];
 		if (strcmp(mod->name, mod_name) == 0) {
+			wire_log(WLOG_DEBUG, "Handling module %s", mod_name);
 			*buf_len = mod->func(buf);
+			wire_log(WLOG_DEBUG, "Handled module %s", mod_name);
 			return buf;
 		}
 	}
@@ -913,7 +1046,7 @@ static void accept_run(void *arg)
 	if (fd < 0)
 		return;
 
-	xlog("Listening on port %d", port);
+	wire_log(WLOG_INFO, "Listening on port %d", port);
 
 	wire_fd_state_t fd_state;
 	wire_fd_mode_init(&fd_state, fd);
@@ -953,6 +1086,8 @@ int main()
 	wire_stack_fault_detector_install();
 	wire_fd_init();
 	wire_io_init(8);
+	wire_log_init_stdout();
+	//wire_log_init_syslog("wire-sysmon", 0, LOG_DAEMON);
 	wire_pool_init(&web_pool, NULL, WEB_POOL_SIZE, 8*4096);
 	wire_init(&wire_accept, "accept", accept_run, NULL, WIRE_STACK_ALLOC(4096));
 	wire_thread_run();
