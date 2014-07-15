@@ -127,7 +127,7 @@ n.newline()
 # tags
 if cmd_exists('ctags') and cmd_succeeds('ctags -R'):
     n.rule('tags',
-            command='ctags -R',
+            command='ctags -R --exclude=*.js',
             description='TAGS $out')
     tags = n.build('tags', 'tags', implicit=c_files_list('src') + c_files_list('libwire/src'))
     top_targets += tags
