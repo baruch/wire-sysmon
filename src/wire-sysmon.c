@@ -697,6 +697,7 @@ static off_t module_speed(char *buf)
 	struct sockaddr_in sockaddr;
 	socklen_t sockaddr_len = sizeof(sockaddr);
 	int ret;
+	int udp_fd = -1;
 
 	ret = wire_net_init_tcp_connected(&net, "speedestimate.ev-en.org", "3030", 10000, (struct sockaddr *)&sockaddr, &sockaddr_len);
 	if (ret < 0) {
@@ -724,7 +725,7 @@ static off_t module_speed(char *buf)
 		goto ExitNet;
 	}
 
-	int udp_fd = socket(AF_INET, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0);
+	udp_fd = socket(AF_INET, SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC, 0);
 
 	struct sockaddr_in addr;
 	memset(&addr, 0, sizeof(addr));
