@@ -698,7 +698,7 @@ static off_t module_speed(char *buf)
 	socklen_t sockaddr_len = sizeof(sockaddr);
 	int ret;
 
-	ret = wire_net_init_tcp_connected(&net, "127.0.0.1", "3030", 10000, (struct sockaddr *)&sockaddr, &sockaddr_len);
+	ret = wire_net_init_tcp_connected(&net, "speedestimate.ev-en.org", "3030", 10000, (struct sockaddr *)&sockaddr, &sockaddr_len);
 	if (ret < 0) {
 		wire_log(WLOG_NOTICE, "failed to connect to pktpair server");
 		goto Exit;
