@@ -794,6 +794,70 @@ Exit:
 	return MOD_OK("speed", "{\"upstream\":%f,\"downstream\":%f}", upload_speed, download_speed);
 }
 
+static off_t module_netstat(char *buf)
+{
+	void *mbuf = wio_mmap(NULL, 1024*1024, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+	if (mbuf == MAP_FAILED) {
+		wire_log(WLOG_ERR, "Failed to allocate buffer for netstat module: %m");
+		return MOD_ERR("netstat", "failed to allocate memory");
+	}
+	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"netstat\",\"data\":[");
+	char *data = mbuf;
+	struct {
+		uint32_t ipaddr;
+		uint32_t count;
+	} *counts = mbuf + 512*1024;
+	int num_counts = 0;
+	int fd;
+
+	fd = wio_open("/proc/net/tcp", O_RDONLY, 0);
+	if (fd >= 0) {
+		int ret = wio_read(fd, data, 512*1024);
+		if (ret >= 0) {
+			// Parse the lines
+			char *state;
+			char *newline = strtok_r(data, "\n", &state);
+			char *linestart = newline+1;
+			while ( (newline = strtok_r(NULL, "\n", &state)) != NULL) {
+				uint32_t remote_address;
+				int n = sscanf(linestart, "%*d: %*x:%*x %x:", &remote_address);
+				if (n == 1 && remote_address) {
+					int i;
+					for (i = 0; i < num_counts; i++) {
+						if (counts[i].ipaddr == remote_address) {
+							counts[i].count++;
+							break;
+						}
+					}
+					if (i == num_counts) {
+						counts[i].ipaddr = remote_address;
+						counts[i].count = 1;
+						num_counts++;
+					}
+				}
+
+				linestart = newline+1;
+			}
+		}
+
+		wio_close(fd);
+	}
+
+	int i;
+	for (i = 0; i < num_counts; i++) {
+		char *ipaddr = (char *)&counts[i].ipaddr;
+		next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%d\",\"%d.%d.%d.%d\"]",
+				i == 0 ? ' ' : ',',
+				counts[i].count,
+				ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]
+				);
+	}
+
+	next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "]}");
+	wio_munmap(mbuf, 1024*1024);
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -810,6 +874,7 @@ struct modules {
 	{"dhcpleases", module_dhcpleases},
 	{"ip", module_ip},
 	{"speed", module_speed},
+	{"netstat", module_netstat},
 };
 
 #include "web.h"
