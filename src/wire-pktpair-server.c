@@ -151,6 +151,7 @@ static void tcp_run(void *arg)
 		wire_log(WLOG_INFO, "Failed to send second UDP packet: %m");
 
 Exit:
+	wire_timeout_stop(&net.tout);
 	wio_close(udp_fd);
 	wio_close(fd);
 }
