@@ -638,7 +638,7 @@ static off_t module_ip_internal(char *buf, off_t next_write)
 			continue;
 
 		char host[NI_MAXHOST];
-		ret = getnameinfo(ifcur->ifa_addr, (family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6)),
+		ret = wio_getnameinfo(ifcur->ifa_addr, (family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6)),
 				host, NI_MAXHOST,
 				NULL, 0,
 				NI_NUMERICHOST);
