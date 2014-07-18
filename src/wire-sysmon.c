@@ -5,6 +5,7 @@
 #include "wire_io.h"
 #include "wire_net.h"
 #include "wire_log.h"
+#include "wire_channel.h"
 #include "macros.h"
 #include "http_parser.h"
 
@@ -14,6 +15,7 @@
 static wire_thread_t wire_thread_main;
 static wire_t wire_accept;
 static wire_pool_t web_pool;
+static wire_pool_t worker_pool;
 
 #include <sched.h>
 #include <stdio.h>
@@ -854,6 +856,57 @@ static off_t module_netstat(char *buf)
 	return next_write;
 }
 
+struct ping_response_msg {
+	const char *hostname;
+	double rtt_avg;
+};
+
+struct ping_req {
+	wire_channel_t ch;
+	const char *hostname;
+};
+
+static void ping_wire(void *arg)
+{
+	struct ping_req *req = arg;
+	struct ping_response_msg msg;
+
+	msg.hostname = req->hostname;
+	msg.rtt_avg = -1.0;
+
+	wire_channel_send(&req->ch, &msg);
+}
+
+static off_t module_ping(char *buf)
+{
+	static char *default_hosts[] = {"gnu.org", "github.com", "wikipedia.org"};
+	struct {
+		wire_channel_t ch;
+		const char *hostname;
+	} req[16];
+	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"ping\",\"data\":[");
+	unsigned i;
+	unsigned num_channels = 0;
+
+	for (i = 0; i < ARRAY_SIZE(default_hosts) && i < ARRAY_SIZE(req); i++) {
+		wire_channel_init(&req[i].ch);
+		req[i].hostname = default_hosts[i];
+		wire_pool_alloc_block(&worker_pool, default_hosts[i], ping_wire, &req[i]);
+		num_channels++;
+	}
+
+	for (i = 0; i < num_channels; i++) {
+		struct ping_response_msg *msg;
+		wire_channel_recv_block(&req[i].ch, (void**)&msg);
+		if (msg) {
+			next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%s\",\"%f\"]", i == 0 ? ' ' : ',', msg->hostname, msg->rtt_avg);
+		}
+	}
+
+	next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -871,6 +924,7 @@ struct modules {
 	{"ip", module_ip},
 	{"speed", module_speed},
 	{"netstat", module_netstat},
+	{"ping", module_ping},
 };
 
 #include "web.h"
@@ -1151,6 +1205,7 @@ int main()
 	wire_log_init_stdout();
 	//wire_log_init_syslog("wire-sysmon", 0, LOG_DAEMON);
 	wire_pool_init(&web_pool, NULL, WEB_POOL_SIZE, 8*4096);
+	wire_pool_init(&worker_pool, NULL, 16, 4096);
 	wire_init(&wire_accept, "accept", accept_run, NULL, WIRE_STACK_ALLOC(4096));
 	wire_thread_run();
 	return 0;
