@@ -909,6 +909,7 @@ static int ping_host_once(wire_fd_state_t *fd_state, struct sockaddr *addr, sock
 	struct sockaddr_in from;
 	socklen_t fromlen;
 	uint16_t icmpid = (uint16_t)(unsigned long)addr;
+	wire_timeout_t tout;
 	int ret;
 
 	fromlen = sizeof(from);
@@ -924,16 +925,18 @@ static int ping_host_once(wire_fd_state_t *fd_state, struct sockaddr *addr, sock
 	icmppkt->icmp_cksum = inet_cksum((void*)icmppkt, sizeof(*icmppkt));
 
 	wire_fd_mode_read(fd_state);
+	wire_timeout_init(&tout);
+	wire_timeout_reset(&tout, 1000);
 
 	clock_gettime(CLOCK_MONOTONIC, &start_time);
 	ret = sendto(fd_state->fd, icmppkt, sizeof(*icmppkt), 0, addr, addrlen);
 	if (ret < 0)
 		return -1;
 
-	// TODO: Need to set the timeout to wait
-	wire_fd_wait(fd_state);
+	wire_timeout_wait(&fd_state->wait, &tout);
 	ret = recvfrom(fd_state->fd, buf, sizeof(buf), 0, &from, &fromlen);
 	clock_gettime(CLOCK_MONOTONIC, &end_time);
+	wire_timeout_stop(&tout);
 	if (ret < 0)
 		return -1;
 
