@@ -43,10 +43,6 @@ static wire_pool_t web_pool;
 #define MODULE_PREFIX "/module.php?module="
 #define WR_BUF_LEN 1024
 
-static wire_thread_t wire_thread_main;
-static wire_t wire_accept;
-static wire_pool_t web_pool;
-
 struct web_data {
 	int fd;
 	bool should_close;
