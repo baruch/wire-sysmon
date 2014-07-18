@@ -1150,7 +1150,7 @@ static void web_run(void *arg)
 		}
 	} while (1);
 
-	close(d.fd);
+	wio_close(d.fd);
 	DEBUG("Disconnected %d", d.fd);
 }
 
