@@ -36,6 +36,7 @@ static wire_pool_t worker_pool;
 #include <sys/socket.h>
 #include <netdb.h>
 #include <syslog.h>
+#include <netinet/ip_icmp.h>
 
 #include "libwire/test/utils.h"
 #include "pktpair.h"
@@ -866,6 +867,136 @@ struct ping_req {
 	const char *hostname;
 };
 
+static int inet_cksum(uint16_t *addr, int len)
+{
+    register int nleft = len;
+    register u_short *w = addr;
+    register u_short answer;
+    register u_int sum = 0;
+    uint16_t odd_byte = 0;
+
+    /*
+     *  Our algorithm is simple, using a 32 bit accumulator (sum),
+     *  we add sequential 16 bit words to it, and at the end, fold
+     *  back all the carry bits from the top 16 bits into the lower
+     *  16 bits.
+     */
+    while( nleft > 1 )  {
+        sum += *w++;
+        nleft -= 2;
+    }
+
+    /* mop up an odd byte, if necessary */
+    if( nleft == 1 ) {
+        *(u_char *)(&odd_byte) = *(u_char *)w;
+        sum += odd_byte;
+    }
+
+    /*
+     * add back carry outs from top 16 bits to low 16 bits
+     */
+    sum = (sum >> 16) + (sum & 0x0000ffff); /* add hi 16 to low 16 */
+    sum += (sum >> 16);                     /* add carry */
+    answer = ~sum;                          /* truncate to 16 bits */
+    return (answer);
+}
+
+static int ping_host_once(wire_fd_state_t *fd_state, struct sockaddr *addr, socklen_t addrlen, int seq, double *t)
+{
+	char buf[sizeof(struct ip) + sizeof(struct icmp)];
+	struct icmp *icmppkt;
+	struct timespec start_time, end_time;
+	struct sockaddr_in from;
+	socklen_t fromlen;
+	uint16_t icmpid = (uint16_t)(unsigned long)addr;
+	int ret;
+
+	fromlen = sizeof(from);
+	memset(buf, fd_state->fd, sizeof(buf));
+	icmppkt = (struct icmp *)buf;
+
+	icmppkt->icmp_type = ICMP_ECHO;
+	icmppkt->icmp_code = 0;
+	icmppkt->icmp_cksum = 0;
+	icmppkt->icmp_seq = seq;
+	icmppkt->icmp_id = icmpid;
+
+	icmppkt->icmp_cksum = inet_cksum((void*)icmppkt, sizeof(*icmppkt));
+
+	wire_fd_mode_read(fd_state);
+
+	clock_gettime(CLOCK_MONOTONIC, &start_time);
+	ret = sendto(fd_state->fd, icmppkt, sizeof(*icmppkt), 0, addr, addrlen);
+	if (ret < 0)
+		return -1;
+
+	// TODO: Need to set the timeout to wait
+	wire_fd_wait(fd_state);
+	ret = recvfrom(fd_state->fd, buf, sizeof(buf), 0, &from, &fromlen);
+	clock_gettime(CLOCK_MONOTONIC, &end_time);
+	if (ret < 0)
+		return -1;
+
+	if (fromlen != sizeof(from)) {
+		wire_log(WLOG_WARNING, "Returned fromlen is unexpected (got %d expected %d)", fromlen, sizeof(from));
+		return -1;
+	}
+
+	icmppkt = (struct icmp *)(buf + sizeof(struct ip));
+	if (icmppkt->icmp_type != ICMP_ECHOREPLY) {
+		wire_log(WLOG_WARNING, "Got a non-reply ICMP message type=%d", icmppkt->icmp_type);
+		return -1;
+	}
+
+	if (icmppkt->icmp_id != icmpid) {
+		wire_log(WLOG_WARNING, "Reply received for wrong id (got %04x expected %04x)", icmppkt->icmp_id, icmpid);
+		return -1;
+	}
+
+	*t = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec) / 1E9;
+	return 0;
+}
+
+static int ping_host(int sfd, struct sockaddr *addr, socklen_t addrlen, int num_pings, double *min_time, double *avg_time, double *max_time)
+{
+	struct timeval tv;
+	double sum_time = 0.0;
+	int count = 0;
+	int i;
+	wire_fd_state_t fd_state;
+
+	wire_fd_mode_init(&fd_state, sfd);
+
+	// In the receive part we want immediate receive
+	tv.tv_sec = 0;
+	tv.tv_usec = 10;
+	setsockopt(sfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+	for (i = 0; i < num_pings; i++) {
+		double t;
+		int ret = ping_host_once(&fd_state, addr, addrlen, i, &t);
+		if (ret != 0)
+			continue;
+
+		count++;
+		sum_time += t;
+		if (min_time && *min_time > t)
+			*min_time = t;
+		if (max_time && *max_time < t)
+			*max_time = t;
+	}
+
+	wire_fd_mode_none(&fd_state);
+
+	if (count == 0)
+		return -1;
+
+	if (avg_time)
+		*avg_time = sum_time / count;
+
+	return 0;
+}
+
 static void ping_wire(void *arg)
 {
 	struct ping_req *req = arg;
@@ -874,6 +1005,41 @@ static void ping_wire(void *arg)
 	msg.hostname = req->hostname;
 	msg.rtt_avg = -1.0;
 
+	struct addrinfo hints;
+	struct addrinfo *result, *rp;
+	int ret;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_INET;    /* Allow IPv4 only */
+	hints.ai_socktype = SOCK_RAW;
+	hints.ai_flags = 0;
+	hints.ai_protocol = IPPROTO_ICMP;
+	hints.ai_canonname = NULL;
+	hints.ai_addr = NULL;
+	hints.ai_next = NULL;
+
+	ret = wio_getaddrinfo(msg.hostname, NULL, &hints, &result);
+	if (ret != 0)
+		goto Exit;
+
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		int sfd = socket(rp->ai_family, rp->ai_socktype|SOCK_NONBLOCK|SOCK_CLOEXEC, rp->ai_protocol);
+		if (sfd == -1)
+			continue;
+
+		double avg_time;
+		ret = ping_host(sfd, rp->ai_addr, rp->ai_addrlen, 3, NULL, &avg_time, NULL);
+		wio_close(sfd);
+		if (ret == 0) {
+			// Ping succeeded
+			msg.rtt_avg = avg_time * 1000.0;
+			break;
+		}
+	}
+
+	freeaddrinfo(result);           /* No longer needed */
+
+Exit:
 	wire_channel_send(&req->ch, &msg);
 }
 
