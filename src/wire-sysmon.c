@@ -1080,20 +1080,20 @@ struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
 } modules[] = {
+	{"df", module_df},
+	{"dhcpleases", module_dhcpleases},
 	{"hostname", module_hostname},
-	{"uptime", module_uptime},
+	{"ip", module_ip},
 	{"issue", module_issue},
-	{"time", module_time},
 	{"loadavg", module_loadavg},
+	{"netstat", module_netstat},
 	{"numberofcores", module_numcores},
 	{"mem", module_mem},
-	{"df", module_df},
-	{"where", module_where},
-	{"dhcpleases", module_dhcpleases},
-	{"ip", module_ip},
-	{"speed", module_speed},
-	{"netstat", module_netstat},
 	{"ping", module_ping},
+	{"speed", module_speed},
+	{"time", module_time},
+	{"uptime", module_uptime},
+	{"where", module_where},
 };
 
 #include "web.h"
