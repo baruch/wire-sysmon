@@ -154,7 +154,7 @@ bin2h_out = n.build('src/web.h', 'bin2h', bin2h_src, implicit=['bin2h'])
 test_utils_obj = c_to_o(['libwire/test/utils.c'])
 
 # wire-sysmon app
-wire_sysmon_obj = c_to_o(['src/wire-sysmon.c'], implicit=bin2h_out)
+wire_sysmon_obj = c_to_o(['src/wire-sysmon.c'], implicit=bin2h_out) + c_to_o(['src/icmp_ping.c'])
 sysmon = n.build('wire-sysmon', 'link', test_utils_obj + wire_sysmon_obj + clibs)
 top_targets += sysmon
 
