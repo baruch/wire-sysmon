@@ -1019,6 +1019,51 @@ static off_t module_bandwidth(char *buf)
 	return next_write;
 }
 
+static off_t module_swap(char *buf)
+{
+	char data[2048];
+	int ret;
+
+	ret = wio_read_file_content("/proc/swaps", data, sizeof(data)-1);
+	if (ret < 0) {
+		return MOD_ERR("swap", "Failed to open /proc/swaps");
+	}
+
+	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"swap\",\"data\":[");
+	char *lines;
+	char *line = strtok_r(data, "\n", &lines);
+	char sep = ' ';
+	while ( (line = strtok_r(NULL, "\n", &lines)) != NULL ) {
+		char *words;
+		char *arg1 = strtok_r(line, " \t", &words);
+		if (!arg1)
+			continue;
+
+		char *arg2 = strtok_r(NULL, " \t", &words);
+		if (!arg2)
+			continue;
+
+		char *arg3 = strtok_r(NULL, " \t", &words);
+		if (!arg3)
+			continue;
+
+		char *arg4 = strtok_r(NULL, " \t", &words);
+		if (!arg4)
+			continue;
+
+		char *arg5 = strtok_r(NULL, " \t", &words);
+		if (!arg5)
+			continue;
+
+		next_write += snprintf(buf+next_write, WR_BUF_LEN-next_write, "%c[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"]", sep,
+				arg1, arg2, arg3, arg4, arg5);
+		sep = ',';
+	}
+
+	next_write += snprintf(buf+next_write, WR_BUF_LEN-next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
@@ -1039,7 +1084,7 @@ struct modules {
 	// ps
 	// sabnzbd
 	{"speed", module_speed},
-	// swap
+	{"swap", module_swap},
 	{"time", module_time},
 	{"uptime", module_uptime},
 	// users
