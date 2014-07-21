@@ -18,6 +18,7 @@ static wire_t wire_accept;
 static wire_pool_t web_pool;
 static wire_pool_t worker_pool;
 
+#include <signal.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1350,8 +1351,21 @@ static void accept_run(void *arg)
 	}
 }
 
+static void block_signals(void)
+{
+	sigset_t sig_set;
+
+	sigemptyset(&sig_set);
+	sigaddset(&sig_set, SIGPIPE);
+	sigaddset(&sig_set, SIGUSR1);
+	sigaddset(&sig_set, SIGUSR2);
+
+	pthread_sigmask(SIG_BLOCK, &sig_set, NULL);
+}
+
 int main()
 {
+	block_signals();
 	wire_thread_init(&wire_thread_main);
 	wire_stack_fault_detector_install();
 	wire_fd_init();
