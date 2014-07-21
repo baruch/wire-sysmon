@@ -1028,6 +1028,7 @@ static off_t module_swap(char *buf)
 	if (ret < 0) {
 		return MOD_ERR("swap", "Failed to open /proc/swaps");
 	}
+	data[ret] = 0;
 
 	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"swap\",\"data\":[");
 	char *lines;
