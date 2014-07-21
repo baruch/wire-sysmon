@@ -251,19 +251,13 @@ static off_t module_hostname(char *buf)
 
 static off_t module_uptime(char *buf)
 {
-	int fd = wio_open("/proc/uptime", O_RDONLY, 0);
-	if (fd < 0) {
-		return MOD_ERR("uptime", "failed to open /proc/uptime: %m");
-	}
-
 	char data[32];
-	int ret = wio_pread(fd, data, sizeof(data), 0);
+
+	int ret = wio_read_file_content("/proc/uptime", data, sizeof(data));
 	if (ret < 0) {
-		wio_close(fd);
 		return MOD_ERR("uptime", "failed to read from /proc/uptime: %m");
 	}
-
-	wio_close(fd);
+	data[ret] = 0;
 
 	int uptime = atoi(data);
 	int days = uptime / (24 * 60*60);
