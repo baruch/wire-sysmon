@@ -200,7 +200,7 @@ int icmp_ping_ipv4(struct sockaddr_in *addr, icmp_ping_state_t *state, double *r
 	icmppkt.icmp_type = ICMP_ECHO;
 	icmppkt.icmp_code = 0;
 	icmppkt.icmp_cksum = 0;
-	icmppkt.icmp_seq = ntohs(state->seq++);
+	icmppkt.icmp_seq = ntohs(++state->seq);
 	icmppkt.icmp_id = ntohs(state->id);
 
 	icmppkt.icmp_cksum = inet_cksum((void*)&icmppkt, sizeof(icmppkt));
