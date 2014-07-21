@@ -953,19 +953,26 @@ struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
 } modules[] = {
+	// bandwidth
 	{"df", module_df},
 	{"dhcpleases", module_dhcpleases},
 	{"hostname", module_hostname},
 	{"ip", module_ip},
 	{"issue", module_issue},
 	{"loadavg", module_loadavg},
+	{"mem", module_mem},
 	{"netstat", module_netstat},
 	{"numberofcores", module_numcores},
-	{"mem", module_mem},
+	// online
+	// phpinfo
 	{"ping", module_ping},
+	// ps
+	// sabnzbd
 	{"speed", module_speed},
+	// swap
 	{"time", module_time},
 	{"uptime", module_uptime},
+	// users
 	{"where", module_where},
 };
 
