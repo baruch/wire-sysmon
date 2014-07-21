@@ -949,11 +949,81 @@ static off_t module_ping(char *buf)
 	return next_write;
 }
 
+static int read_file_ulong(const char *filename, unsigned long *val)
+{
+	char buf[128];
+	char *endptr;
+	int ret;
+
+	ret = wio_read_file_content(filename, buf, sizeof(buf)-1);
+	if (ret < 0)
+		return -1;
+
+	buf[ret] = 0;
+
+	*val = strtoul(buf, &endptr, 10);
+	if (buf[0] == 0 || (*endptr != 0 && *endptr != '\n'))
+		return -1;
+
+	return 0;
+}
+
+static int read_net_bytes(const char *iface, unsigned long *tx_bytes, unsigned long *rx_bytes)
+{
+	char filename[128];
+
+	snprintf(filename, sizeof(filename), "/sys/class/net/%s/statistics/tx_bytes", iface);
+	if (read_file_ulong(filename, tx_bytes) < 0)
+		return -1;
+
+	snprintf(filename, sizeof(filename), "/sys/class/net/%s/statistics/rx_bytes", iface);
+	if (read_file_ulong(filename, rx_bytes) < 0)
+		return -1;
+
+	return 0;
+}
+
+static off_t module_bandwidth(char *buf)
+{
+	DIR *dir;
+	struct dirent dirent;
+	struct dirent *pdirent;
+	int ret;
+	int next_write = snprintf(buf, WR_BUF_LEN, "{\"module\":\"bandwidth\",\"data\":[");
+	int first = 1;
+
+	dir = wio_opendir("/sys/class/net");
+
+	for (ret = wio_readdir_r(dir, &dirent, &pdirent); ret == 0 && pdirent != NULL; ret = wio_readdir_r(dir, &dirent, &pdirent))
+	{
+		unsigned long tx_bytes1, rx_bytes1;
+		unsigned long tx_bytes2, rx_bytes2;
+
+		if (dirent.d_name[0] == '.' || strcmp(dirent.d_name, "lo") == 0)
+			continue;
+
+		if (read_net_bytes(dirent.d_name, &tx_bytes1, &rx_bytes1) < 0)
+			continue;
+
+		wire_fd_wait_msec(2000);
+
+		if (read_net_bytes(dirent.d_name, &tx_bytes2, &rx_bytes2) < 0)
+			continue;
+
+		next_write += snprintf(buf+next_write, WR_BUF_LEN - next_write, "%c{\"interface\":\"%s\",\"tx\":%lu,\"rx\":%lu}", first ? ' ' : ',', dirent.d_name, tx_bytes2-tx_bytes1, rx_bytes2-rx_bytes1);
+		first = 0;
+	}
+
+	wio_closedir(dir);
+	next_write += snprintf(buf+next_write , WR_BUF_LEN - next_write, "]}");
+	return next_write;
+}
+
 struct modules {
 	const char *name;
 	off_t (*func)(char *buf);
 } modules[] = {
-	// bandwidth
+	{"bandwidth", module_bandwidth},
 	{"df", module_df},
 	{"dhcpleases", module_dhcpleases},
 	{"hostname", module_hostname},
