@@ -833,8 +833,8 @@ static off_t module_netstat(char *buf)
 
 	int i;
 	for (i = 0; i < num_counts; i++) {
-		char *ipaddr = (char *)&counts[i].ipaddr;
-		next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%d\",\"%d.%d.%d.%d\"]",
+		unsigned char *ipaddr = (unsigned char *)&counts[i].ipaddr;
+		next_write += snprintf(buf + next_write, WR_BUF_LEN - next_write, "%c[\"%d\",\"%u.%u.%u.%u\"]",
 				i == 0 ? ' ' : ',',
 				counts[i].count,
 				ipaddr[0], ipaddr[1], ipaddr[2], ipaddr[3]
