@@ -801,39 +801,34 @@ static off_t module_netstat(char *buf)
 		uint32_t count;
 	} *counts = mbuf + 512*1024;
 	int num_counts = 0;
-	int fd;
+	int ret;
 
-	fd = wio_open("/proc/net/tcp", O_RDONLY, 0);
-	if (fd >= 0) {
-		int ret = wio_read(fd, data, 512*1024);
-		if (ret >= 0) {
-			// Parse the lines
-			char *state;
-			char *newline = strtok_r(data, "\n", &state);
-			char *linestart = newline+1;
-			while ( (newline = strtok_r(NULL, "\n", &state)) != NULL) {
-				uint32_t remote_address;
-				int n = sscanf(linestart, "%*d: %*x:%*x %x:", &remote_address);
-				if (n == 1 && remote_address) {
-					int i;
-					for (i = 0; i < num_counts; i++) {
-						if (counts[i].ipaddr == remote_address) {
-							counts[i].count++;
-							break;
-						}
-					}
-					if (i == num_counts) {
-						counts[i].ipaddr = remote_address;
-						counts[i].count = 1;
-						num_counts++;
+	ret = wio_read_file_content("/proc/net/tcp", data, 512*1024);
+	if (ret >= 0) {
+		// Parse the lines
+		char *state;
+		char *newline = strtok_r(data, "\n", &state);
+		char *linestart = newline+1;
+		while ( (newline = strtok_r(NULL, "\n", &state)) != NULL) {
+			uint32_t remote_address;
+			int n = sscanf(linestart, "%*d: %*x:%*x %x:", &remote_address);
+			if (n == 1 && remote_address) {
+				int i;
+				for (i = 0; i < num_counts; i++) {
+					if (counts[i].ipaddr == remote_address) {
+						counts[i].count++;
+						break;
 					}
 				}
-
-				linestart = newline+1;
+				if (i == num_counts) {
+					counts[i].ipaddr = remote_address;
+					counts[i].count = 1;
+					num_counts++;
+				}
 			}
-		}
 
-		wio_close(fd);
+			linestart = newline+1;
+		}
 	}
 
 	int i;
